@@ -195,7 +195,7 @@ def generer_cartes(cle_api: str, profil: dict, nombre: int, deja: list[str] | No
     from flashcards import CartesInvalides, valider_cartes
 
     demande = (f"Classe : {profil.get('classe')}. Programme : {profil.get('programme', 'France')}.\n"
-               f"Chapitre : {decrire_theme(profil)}.\nNombre de cartes : {nombre}.")
+               f"Thème : {decrire_theme(profil)}.\nNombre de cartes : {nombre}.")
     if deja:
         demande += "\nNe reprends pas ces questions déjà vues : " + " | ".join(deja[:20])
     messages = [{"role": "user", "content": demande}]
