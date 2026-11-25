@@ -165,7 +165,7 @@ def test_espace_prof_affiche_la_seance(base):
     base.table("sessions_physique_college").insert({"eleve_nom": "Inès", "classe": "4ème", "chapitre": "Atomes et molécules",
                                            "nb_exercices": 2, "phase_finale": "bilan", "bilan": "ok", "date_session": "2026-11-11T10:00:00"}).execute()
     at = lancer()
-    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[1]).run()
+    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[2]).run()
     at.text_input[0].input("prof2024").run()
     ok(at)
     assert any("Inès" in e.label for e in at.expander)
@@ -177,7 +177,7 @@ def test_espace_prof_affiche_la_seance(base):
 ])
 def test_sans_base_valide_l_espace_prof_explique_quoi_faire(base, secrets):
     at = lancer(secrets)
-    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[1]).run()
+    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[2]).run()
     assert "SUPABASE_KEY" in at.warning[0].value and "secrète" in at.warning[0].value
 
 
@@ -243,11 +243,11 @@ def test_deux_seances_points_et_badges_cumules(base):
     assert enregistre["badges"] == s1["badges_nouveaux"] and enregistre["interets"] == ["⚽ Sport"]
 
     # Deuxième séance, même prénom : accueil personnalisé, total cumulé, badges non redonnés
-    bouton(at.sidebar, "🗑️ Nouvelle séance").click().run()
+    bouton(at.sidebar, "＋ Nouvelle séance").click().run()
     ok(at)
     at.text_input[0].input("Inès").run()
-    accueil = " ".join(m.value for m in at.success)
-    assert f"Tu as **{s1['points']} points**" in accueil and "Séance terminée" in accueil
+    accueil = " ".join(m.value for m in at.markdown)
+    assert f"⭐ {s1['points']} pts" in accueil and "Séance terminée" in accueil and "Salut Inès !" in accueil
     s2 = seance_complete(at)
     assert s2["points_avant"] == s1["points"]
     assert not set(s2["badges_nouveaux"]) & set(s1["badges_nouveaux"])
@@ -258,7 +258,7 @@ def test_deux_seances_points_et_badges_cumules(base):
 def test_espace_prof_vue_par_eleve(base):
     at = lancer()
     s = seance_complete(at)
-    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[1]).run()
+    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[2]).run()
     at.text_input[0].input("prof2024").run()
     ok(at)
     vue = at.dataframe[0].value
@@ -322,7 +322,7 @@ def test_photo_lue_verifiee_puis_seance_de_variantes(base):
     assert json.loads(ligne["messages"])["modele"] == corrige
     assert len(json.dumps(ligne, ensure_ascii=False)) < 20_000 and "base64" not in json.dumps(ligne)
     # L'espace prof montre la transcription
-    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[1]).run()
+    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[2]).run()
     at.text_input[0].input("prof2024").run()
     ok(at)
     assert any(corrige in t.value for t in at.text)
@@ -373,3 +373,77 @@ def test_exercice_vide_affiche_reessayer_au_lieu_de_planter(base):
     bouton(at, "Réessayer").click().run()
     ok(at)
     assert at.session_state["seance"]["exercice"] is not None
+
+
+# ───────────── Tableau de bord d'accueil ─────────────
+
+def _seance_enregistree(base, nom="Inès", chapitre="Masse volumique", jour=None, exercices=6, sans_aide=2):
+    from datetime import datetime as _dt
+    base.table("sessions_physique_college").insert({
+        "eleve_nom": nom, "classe": "4ème", "chapitre": chapitre, "nb_exercices": exercices, "phase_finale": "bilan",
+        "bilan": "ok", "date_session": f"{jour or _dt.now().date().isoformat()}T10:00:00",
+        "messages": json.dumps({"resultats": [], "points": 30, "badges": ["premier_sans_indice"],
+                                "stats": {"exercices": exercices, "reussis": exercices, "sans_aide": sans_aide}})}).execute()
+
+
+def test_accueil_serie_objectif_et_recommandation(base):
+    _seance_enregistree(base)
+    at = lancer()
+    at.text_input(key="prenom").input("Inès").run()
+    at.selectbox(key="classe").set_value("4ème").run()
+    ok(at)
+    textes = " ".join(m.value for m in at.markdown)
+    assert "🔥 1 jour" in textes and "6/10 exercices" in textes and "continue aujourd'hui" in textes
+    assert "Masse volumique" in textes and "À consolider : 33 %" in textes        # 2 sur 6 sans aide
+    bouton(at, "▶ Lancer la séance").click().run()
+    ok(at)
+    s = at.session_state["seance"]
+    assert s["profil"]["chapitre"] == "Masse volumique" and s["nb_total"] == 6 and s["profil"]["nom"] == "Inès"
+
+
+def test_recommandation_sans_prenom_desactivee(base):
+    at = lancer()
+    assert bouton(at, "▶ Lancer la séance").disabled
+    assert any("Écris ton prénom" in c.value for c in at.caption)
+
+
+def test_refaire_un_chapitre(base):
+    _seance_enregistree(base, chapitre="Atomes et molécules", sans_aide=6)
+    at = lancer()
+    at.text_input(key="prenom").input("Inès").run()
+    bouton(at, "Refaire ce chapitre").click().run()
+    ok(at)
+    assert at.session_state["seance"]["profil"]["chapitre"] == "Atomes et molécules"
+    assert not at.session_state["seance"]["profil"]["theme_libre"]
+
+
+def test_page_ma_progression(base):
+    _seance_enregistree(base)
+    at = lancer()
+    at.text_input(key="prenom").input("Inès").run()
+    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[1]).run()
+    ok(at)
+    textes = " ".join(m.value for m in at.markdown)
+    assert "Ma progression" in textes and "🎯 Premier sans indice" in textes and "🔒 Série de 5" in textes
+    assert at.dataframe[0].value.iloc[0]["Chapitre"] == "Masse volumique"
+
+
+def test_prenom_avec_html_affiche_comme_texte(base):
+    at = lancer()
+    at.text_input(key="prenom").input("<b>Léa</b>").run()
+    ok(at)
+    salut = next(m.value for m in at.markdown if "Salut" in m.value)
+    assert "&lt;b&gt;Léa&lt;/b&gt;" in salut and "<b>Léa</b>" not in salut
+
+
+def test_prenom_garde_d_une_page_a_l_autre_et_apres_une_seance(base):
+    at = lancer()
+    at.text_input(key="prenom").input("Inès").run()
+    at.selectbox(key="classe").set_value("3ème").run()
+    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[1]).run()
+    at.sidebar.radio[0].set_value(at.sidebar.radio[0].options[0]).run()
+    assert at.text_input(key="prenom").value == "Inès" and at.selectbox(key="classe").value == "3ème"
+    bouton(at, "🚀 Commencer").click().run()
+    bouton(at.sidebar, "＋ Nouvelle séance").click().run()
+    ok(at)
+    assert at.text_input(key="prenom").value == "Inès" and at.selectbox(key="classe").value == "3ème"
