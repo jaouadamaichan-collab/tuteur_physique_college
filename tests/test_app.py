@@ -472,7 +472,8 @@ def test_flashcards_de_bout_en_bout(base):
     aller_flashcards(at)
     assert at.selectbox(key="classe_cartes").value == "4ème"
     at.selectbox(key="chapitre_cartes").set_value("Masse volumique").run()
-    at.button_group(key="nb_cartes").set_value(5).run()
+    assert not any("Sur ta dernière séance" in m.value for m in at.markdown)     # aucune séance encore
+    at.button_group(key="nb_cartes_autre").set_value(5).run()
     bouton(at, "✨ Créer les cartes").click().run()
     ok(at)
     assert "Nombre de cartes : 5" in appels_de("écrire des flashcards")[0]["messages"][0]["content"]
@@ -532,3 +533,59 @@ def test_raccourci_flashcards_depuis_l_accueil_et_seances_recentes_sans_flashcar
     bouton(at, "Réviser avec des flashcards").click().run()
     ok(at)
     assert at.sidebar.radio[0].value == at.sidebar.radio[0].options[1]
+
+
+def demande_de_cartes():
+    return appels_de("écrire des flashcards")[-1]["messages"][0]["content"]
+
+
+def test_bilan_de_seance_cree_les_flashcards_sur_ce_theme(base):
+    at = lancer()
+    seance_complete(at)                                     # séance sur « Masse volumique »
+    bouton(at, "🃏 Réviser ce thème en flashcards").click().run()
+    ok(at)
+    assert at.sidebar.radio[0].value == at.sidebar.radio[0].options[1]
+    r = at.session_state["revision"]
+    assert r is not None and r["profil"]["chapitre"] == "Masse volumique" and r["profil"]["classe"] == "4ème"
+    assert "chapitre « Masse volumique »" in demande_de_cartes() and "Nombre de cartes : 10" in demande_de_cartes()
+
+
+def test_page_flashcards_propose_la_derniere_seance_par_defaut(base):
+    _seance_enregistree(base, chapitre="Atomes et molécules")
+    at = lancer()
+    at.text_input(key="prenom").input("Inès").run()
+    aller_flashcards(at)
+    assert any("Sur ta dernière séance" in m.value and "Atomes et molécules" in m.value for m in at.markdown)
+    at.button_group(key="nb_cartes").set_value(15).run()
+    bouton(at, "✨ Réviser ce thème en flashcards").click().run()
+    ok(at)
+    assert "chapitre « Atomes et molécules »" in demande_de_cartes() and "Nombre de cartes : 15" in demande_de_cartes()
+
+
+def test_flashcards_sur_une_autre_thematique_ecrite(base):
+    _seance_enregistree(base, chapitre="Atomes et molécules")
+    at = lancer()
+    at.text_input(key="prenom").input("Inès").run()
+    aller_flashcards(at)
+    at.button_group(key="mode_cartes").set_value("✏️ Un autre thème").run()
+    bouton(at, "✨ Créer les cartes").click().run()
+    assert any("Écris ta thématique" in w.value for w in at.warning) and at.session_state["revision"] is None
+    at.text_area(key="theme_cartes").input("Les unités de mesure en électricité").run()
+    bouton(at, "✨ Créer les cartes").click().run()
+    ok(at)
+    assert "thème libre décrit par l'élève" in demande_de_cartes() and "unités de mesure en électricité" in demande_de_cartes()
+
+
+def test_flashcards_apres_une_seance_sur_photo_gardent_l_exercice_modele(base):
+    base.table("sessions_physique_college").insert({
+        "eleve_nom": "Inès", "classe": "4ème", "chapitre": "📸 loi d'additivité des tensions", "nb_exercices": 6,
+        "phase_finale": "bilan", "bilan": "ok", "date_session": "2026-11-24T10:00:00",
+        "messages": json.dumps({"resultats": [], "points": 30, "badges": [], "stats": {"exercices": 6, "sans_aide": 4},
+                                "modele": "Une pile de 6 V alimente L1 et L2 en série."})}).execute()
+    at = lancer()
+    at.text_input(key="prenom").input("Inès").run()
+    aller_flashcards(at)
+    assert any("ton exercice de classe" in m.value for m in at.markdown)
+    bouton(at, "✨ Réviser ce thème en flashcards").click().run()
+    ok(at)
+    assert "exercice modèle" in demande_de_cartes() and "Une pile de 6 V" in demande_de_cartes()

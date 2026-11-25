@@ -220,6 +220,8 @@ h1, h2, h3, h4 { color: var(--encre); letter-spacing: -0.01em; }
 
 /* ── Flashcards ─────────────────────────────────────────── */
 .st-key-creer_cartes { background: var(--carte); border: 2px dashed var(--menthe-fonce); border-radius: 20px; padding: 1.2rem 1.3rem; }
+.st-key-cartes_seance { background: linear-gradient(160deg, #DDF5F0 0%, #CBEDE5 100%); border: 1px solid var(--menthe-fonce);
+                       border-radius: 22px; padding: 1.2rem 1.3rem; }
 .st-key-pile, .st-key-rappel_cartes { background: var(--carte); border: 1px solid var(--trait); border-radius: 20px; padding: 1.2rem 1.3rem; }
 .pile-nombre { font-size: 2.6rem; font-weight: 700; color: var(--rose); line-height: 1.1; margin-top: .4rem; }
 .st-key-carte, .st-key-carte_retournee { border-radius: 26px; padding: 2rem 1.6rem 1.4rem; text-align: center; min-height: 260px;
@@ -886,6 +888,38 @@ def afficher_revision(r: dict, sb_ok: bool):
         st.rerun()
 
 
+def derniere_thematique(lignes: list[dict]) -> dict | None:
+    """Thème de la dernière séance d'exercices : celle en cours ou qui vient de se terminer, sinon la plus récente
+    enregistrée (hors flashcards). Garde le chapitre, le thème libre ou l'exercice modèle photographié."""
+    s = st.session_state.get("seance")
+    if s is not None:
+        p = s["profil"]
+        return {"classe": p.get("classe", ""), "chapitre": p.get("chapitre", ""),
+                "theme_libre": bool(p.get("theme_libre")), "modele": p.get("modele") or ""}
+    for ligne in lignes:
+        if not F.est_flashcards(P.lire_contenu(ligne)) and ligne.get("chapitre"):
+            p = profil_depuis_ligne(ligne, {"classe": ligne.get("classe", "")})
+            return {k: p[k] for k in ("classe", "chapitre", "theme_libre", "modele")}
+    return None
+
+
+def demander_cartes_de_la_seance():
+    """Bouton du bilan : aller aux flashcards et créer tout de suite les cartes sur le thème de la séance."""
+    st.session_state.nav = PAGE_CARTES
+    st.session_state["_cartes_de_la_seance"] = True
+
+
+def creer_cartes(profil: dict, nombre: int, pile: list[dict]):
+    try:
+        with st.spinner("🃏 Le tuteur écrit tes cartes…"):
+            cartes = T.generer_cartes(get_api_key() or "", profil, nombre, deja=[c["recto"] for c in pile])
+    except T.TuteurIndisponible:
+        st.error("Le tuteur ne répond pas pour le moment. Réessaie dans un instant.")
+    else:
+        st.session_state.revision = F.nouvelle_revision(cartes, profil)
+        st.rerun()
+
+
 def page_flashcards(sb_ok: bool):
     nom = (st.session_state.get("prenom") or "").strip()
     lignes = charger_seances_eleve(nom) if sb_ok and nom else []
@@ -896,20 +930,48 @@ def page_flashcards(sb_ok: bool):
         afficher_revision(r, sb_ok)
         return
 
-    st.markdown("## Flashcards")
     pile = pile_a_revoir(lignes)
+    derniere = derniere_thematique(lignes)
+    base = {"nom": nom or "Élève", "programme": PAYS_PROGRAMMES[0], "theme_libre": False, "modele": ""}
+    if st.session_state.pop("_cartes_de_la_seance", False) and derniere:   # demandé depuis le bilan d'une séance
+        creer_cartes({**base, **derniere}, 10, pile)
+
+    st.markdown("## Flashcards")
     gauche, droite = st.columns([1.6, 1], gap="large")
-    with gauche, st.container(key="creer_cartes"):
-        st.markdown('<div class="titre-carte">🃏 Crée tes flashcards</div><div class="sous-titre">Le tuteur écrit une '
-                    "question au recto et la réponse au verso. Tu retournes chaque carte et tu dis si tu savais.</div>",
-                    unsafe_allow_html=True)
-        classes = list(CHAPITRES.keys())
-        classe_eleve = st.session_state.get("classe")
-        classe = st.selectbox("📚 Classe", classes, index=classes.index(classe_eleve) if classe_eleve in classes else 0,
-                              key="classe_cartes")
-        chapitre = st.selectbox("📖 Chapitre", CHAPITRES.get(classe, []) or ["(écris ton thème sur l'accueil)"], key="chapitre_cartes")
-        nombre = st.segmented_control("Nombre de cartes", F.NOMBRES, default=10, key="nb_cartes") or 10
-        creer = st.button("✨ Créer les cartes", type="primary", use_container_width=True, disabled=not CHAPITRES.get(classe))
+    creer_derniere = creer_autre = False
+    with gauche:
+        if derniere:
+            with st.container(key="cartes_seance"):
+                nature = ("ton exercice de classe" if derniere["modele"] else "ton thème" if derniere["theme_libre"]
+                          else derniere["classe"])
+                st.markdown(f'<div class="etiquette"><span class="icone">🎯</span>Sur ta dernière séance</div>'
+                            f'<div class="reco-titre">{html.escape(derniere["chapitre"])}</div>'
+                            f'<div class="puces"><span class="puce vert">{html.escape(nature)}</span></div>',
+                            unsafe_allow_html=True)
+                c1, c2 = st.columns([1, 1.3], vertical_alignment="bottom")
+                nombre_derniere = c1.segmented_control("Nombre de cartes", F.NOMBRES, default=10, key="nb_cartes") or 10
+                creer_derniere = c2.button("✨ Réviser ce thème en flashcards", type="primary", use_container_width=True)
+            st.markdown("")
+        with st.container(key="creer_cartes"):
+            st.markdown('<div class="titre-carte">🃏 ' + ("Ou choisis une autre thématique" if derniere else "Crée tes flashcards")
+                        + '</div><div class="sous-titre">Le tuteur écrit une question au recto et la réponse au verso. '
+                        "Tu retournes chaque carte et tu dis si tu savais.</div>", unsafe_allow_html=True)
+            mode = st.segmented_control("Thématique", [MODE_CHAPITRE, AUTRE_THEME], default=MODE_CHAPITRE,
+                                        key="mode_cartes", label_visibility="collapsed") or MODE_CHAPITRE
+            classes = list(CHAPITRES.keys())
+            classe_eleve = st.session_state.get("classe")
+            classe = st.selectbox("📚 Classe", classes, index=classes.index(classe_eleve) if classe_eleve in classes else 0,
+                                  key="classe_cartes")
+            if mode == MODE_CHAPITRE:
+                chapitre = st.selectbox("📖 Chapitre", CHAPITRES.get(classe, []) or ["—"], key="chapitre_cartes")
+                pret = bool(CHAPITRES.get(classe))
+            else:
+                chapitre = st.text_area("✏️ Ta thématique", max_chars=150, height=68, key="theme_cartes",
+                                        placeholder="Ex : Les unités de mesure en électricité").strip()
+                pret = True
+            nombre_autre = st.segmented_control("Nombre de cartes", F.NOMBRES, default=10, key="nb_cartes_autre") or 10
+            creer_autre = st.button("✨ Créer les cartes", type="primary" if not derniere else "secondary",
+                                    use_container_width=True, disabled=not pret)
     with droite, st.container(key="pile"):
         st.markdown(f'<div class="etiquette"><span class="icone">🔁</span>Cartes à revoir</div>'
                     f'<div class="pile-nombre">{len(pile)}</div>'
@@ -920,19 +982,15 @@ def page_flashcards(sb_ok: bool):
         if not nom:
             st.caption("Écris ton prénom sur l'accueil pour garder tes cartes à revoir.")
 
-    profil = {"nom": nom or "Élève", "classe": classe, "programme": PAYS_PROGRAMMES[0], "chapitre": chapitre,
-              "theme_libre": False, "modele": ""}
-    if creer:
-        try:
-            with st.spinner("🃏 Le tuteur écrit tes cartes…"):
-                cartes = T.generer_cartes(get_api_key() or "", profil, nombre, deja=[c["recto"] for c in pile])
-        except T.TuteurIndisponible:
-            st.error("Le tuteur ne répond pas pour le moment. Réessaie dans un instant.")
+    if creer_derniere and derniere:
+        creer_cartes({**base, **derniere}, nombre_derniere, pile)
+    if creer_autre:
+        if mode == AUTRE_THEME and not chapitre:
+            st.warning("✏️ Écris ta thématique, puis clique sur « Créer les cartes ».")
         else:
-            st.session_state.revision = F.nouvelle_revision(cartes, profil)
-            st.rerun()
+            creer_cartes({**base, "classe": classe, "chapitre": chapitre, "theme_libre": mode == AUTRE_THEME}, nombre_autre, pile)
     if revoir and pile:
-        st.session_state.revision = F.nouvelle_revision(pile, {**profil, "chapitre": "Cartes à revoir"})
+        st.session_state.revision = F.nouvelle_revision(pile, {**base, "classe": classe, "chapitre": "Cartes à revoir"})
         st.rerun()
 
 
@@ -1026,6 +1084,9 @@ def main():
         st.error("⚠️ Clé API Claude manquante : ajoutez ANTHROPIC_API_KEY dans les secrets Streamlit.")
         return
     ecran.afficher(st.session_state.seance, get_api_key(), sauvegarder_seance if sb_ok else None)
+    if st.session_state.seance is not None and st.session_state.seance["termine"]:
+        st.button("🃏 Réviser ce thème en flashcards", type="primary", use_container_width=True,
+                  on_click=demander_cartes_de_la_seance, key="cartes_du_bilan")
 
 
 if __name__ == "__main__":
