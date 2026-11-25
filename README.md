@@ -6,6 +6,7 @@ Tuteur de physique-chimie pour collégiens (6ᵉ à 3ᵉ), construit sur le mod�
 ## Fonctionnalités
 
 - 🧭 **Trois façons de choisir le thème** : un chapitre du programme, **📸 la photo d'un exercice fait en classe**, ou un thème libre
+- 🗂️ **Flashcards** : le tuteur écrit des cartes (question / réponse, parfois avec un schéma) sur un chapitre ; l'élève les retourne et note « Je savais » ou « À revoir » ; les cartes à revoir repassent dans la série et sont gardées pour la fois suivante
 - 🃏 **Carte de jeu** : un exercice par écran, points, série, badges et missions selon les centres d'intérêt
 - 🔀 **Six formats en rotation** : QCM, réponse numérique (avec unité), vrai ou faux, texte à trous, étapes dans l'ordre (protocoles, raisonnements), réponse rédigée
 - 🔌 **Schémas dessinés par l'app** : circuits électriques en série ou en dérivation (pile, lampes, moteur, résistance, DEL, interrupteurs, ampèremètre, voltmètre), graphiques d'expérience, molécules et transformations chimiques en modèles moléculaires
@@ -25,6 +26,7 @@ Vocabulaire du projet : `GLOSSARY.md`. Décisions : `docs/adr/`.
 | `exercices.py` | Contrat d'exercice, correction, rotation des formats, barème |
 | `figures.py` | Schémas de physique-chimie (circuits, graphiques, molécules, réactions) |
 | `tuteur.py` | Prompts et appels à l'API Claude |
+| `flashcards.py` | Flashcards : validation des cartes, série de révision, cartes à revoir |
 | `progression.py`, `modele.py` | Points et badges cumulés ; exercice modèle photographié |
 
 ## Déploiement (Streamlit Cloud + Supabase)

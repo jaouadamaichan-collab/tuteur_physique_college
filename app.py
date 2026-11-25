@@ -15,6 +15,7 @@ import streamlit as st
 
 import ecran
 import exercices as E
+import flashcards as F
 import modele as M
 import progression as P
 import seance as S
@@ -216,6 +217,20 @@ h1, h2, h3, h4 { color: var(--encre); letter-spacing: -0.01em; }
 .jauge.rose > i { background: var(--rose); }
 .jauge.encre > i { background: var(--encre); }
 .serie-msg { background: var(--ambre-clair); color: #7A4F00; border-radius: 14px; padding: .55rem .8rem; font-size: .9rem; font-weight: 500; margin-top: .5rem; }
+
+/* ── Flashcards ─────────────────────────────────────────── */
+.st-key-creer_cartes { background: var(--carte); border: 2px dashed var(--menthe-fonce); border-radius: 20px; padding: 1.2rem 1.3rem; }
+.st-key-pile, .st-key-rappel_cartes { background: var(--carte); border: 1px solid var(--trait); border-radius: 20px; padding: 1.2rem 1.3rem; }
+.pile-nombre { font-size: 2.6rem; font-weight: 700; color: var(--rose); line-height: 1.1; margin-top: .4rem; }
+.st-key-carte, .st-key-carte_retournee { border-radius: 26px; padding: 2rem 1.6rem 1.4rem; text-align: center; min-height: 260px;
+    border: 1px solid var(--trait); box-shadow: 0 8px 0 var(--menthe); }
+.st-key-carte, .st-key-carte_retournee { background: var(--carte); }
+.st-key-carte_retournee { box-shadow: 0 8px 0 var(--menthe-fonce); }
+.face { color: var(--doux); font-size: .9rem; font-weight: 500; margin-bottom: .6rem; text-align: center; }
+.question { font-size: 1.5rem; font-weight: 600; color: var(--encre); line-height: 1.35; max-width: 34ch; margin: 0 auto .4rem; text-align: center; }
+.reponse { font-size: 1.25rem; font-weight: 500; color: var(--encre); line-height: 1.45; text-align: center;
+           background: var(--menthe); border-radius: 16px; padding: .9rem 1.1rem; max-width: 40ch; margin: 1rem auto 0; }
+.reponse small { display: block; color: var(--doux); font-size: .85rem; font-weight: 500; margin-bottom: .25rem; }
 
 /* ── Ma progression ─────────────────────────────────────── */
 .chiffre { background: var(--carte); border: 1px solid var(--trait); border-radius: 18px; padding: 1rem 1.2rem; }
@@ -541,7 +556,8 @@ ATOME = """<svg width="92" height="92" viewBox="0 0 100 100" aria-hidden="true">
   <circle cx="29" cy="13.6" r="5" fill="#F4B740"/>
 </svg>"""
 
-PAGES = ["🏠  Aujourd'hui", "📈  Ma progression", "🧑‍🏫  Espace prof"]
+PAGE_ACCUEIL, PAGE_CARTES, PAGE_PROGRESSION, PAGE_PROF = "🏠  Aujourd'hui", "🃏  Flashcards", "📈  Ma progression", "🧑‍🏫  Espace prof"
+PAGES = [PAGE_ACCUEIL, PAGE_CARTES, PAGE_PROGRESSION, PAGE_PROF]
 DUREE_RAPIDE = "15 min"
 
 
@@ -671,10 +687,11 @@ def page_accueil(sb_ok: bool):
                 programme = st.selectbox("🌍 Programme", PAYS_PROGRAMMES)
 
         refaire = None
-        if lignes:
+        recentes = [l for l in lignes if not F.est_flashcards(P.lire_contenu(l))]
+        if recentes:
             st.markdown("### Tes dernières séances")
             cols = st.columns(2)
-            for i, ligne in enumerate(lignes[:4]):
+            for i, ligne in enumerate(recentes[:4]):
                 texte, pct = statut_seance(ligne)
                 classe_txt = "ok" if texte.startswith("Tout") else "a-revoir"
                 with cols[i % 2], st.container(key=f"recente_{i}"):
@@ -724,6 +741,13 @@ def page_accueil(sb_ok: bool):
                 <div class="serie-msg">{message}</div>""",
                 unsafe_allow_html=True,
             )
+        st.markdown("")
+        with st.container(key="rappel_cartes"):
+            pile = pile_a_revoir(lignes)
+            st.markdown(f'<div class="etiquette"><span class="icone">🃏</span>Flashcards</div>'
+                        f'<div class="sous-titre">{len(pile)} carte{"s" if len(pile) > 1 else ""} à revoir</div>',
+                        unsafe_allow_html=True)
+            st.button("Réviser avec des flashcards", use_container_width=True, on_click=aller_aux_cartes, key="vers_cartes")
 
     base = {"nom": nom or "Élève", "classe": classe, "programme": programme, "interets": interets,
             "objectif": objectif or "Réviser et progresser", "theme_libre": False, "modele": ""}
@@ -766,16 +790,156 @@ def page_progression(sb_ok: bool):
     rows = []
     for ligne in lignes:
         stats = P.lire_contenu(ligne).get("stats") or {}
-        rows.append({"Date": str(ligne.get("date_session", ""))[:10], "Chapitre": ligne.get("chapitre", ""),
+        rows.append({"Date": str(ligne.get("date_session", ""))[:10],
+                     "Type": "Flashcards" if F.est_flashcards(P.lire_contenu(ligne)) else "Exercices",
+                     "Chapitre": ligne.get("chapitre", ""),
                      "Exercices": stats.get("exercices", ligne.get("nb_exercices", 0)),
                      "Réussis": stats.get("reussis", "—"), "Sans aide": stats.get("sans_aide", "—"),
                      "Points": P.lire_contenu(ligne).get("points", "—")})
     st.dataframe(rows, hide_index=True, use_container_width=True)
 
 
+# ───────────── Flashcards ─────────────
+
+def sauvegarder_flashcards(r: dict) -> bool:
+    sb = get_supabase()
+    if not sb:
+        return False
+    b, p = F.bilan(r), r["profil"]
+    data = {
+        "eleve_nom": p.get("nom", "Élève"), "classe": p.get("classe", ""), "programme": p.get("programme", ""),
+        "chapitre": f"🃏 {p.get('chapitre', '')}", "objectif": "", "temps": "", "nb_exercices": 0, "nb_echanges": 0,
+        "phase_finale": F.TYPE, "bilan": f"Flashcards : {b['sues']} carte(s) sue(s) sur {b['cartes']}, {b['a_revoir']} à revoir.",
+        "messages": json.dumps(F.contenu_a_enregistrer(r), ensure_ascii=False),
+        "date_session": datetime.now().isoformat(),
+    }
+    try:
+        sb.table(TABLE).insert(data).execute()
+        return True
+    except Exception:
+        return False
+
+
+def pile_a_revoir(lignes: list[dict]) -> list[dict]:
+    return F.cartes_a_revoir([P.lire_contenu(l) for l in lignes])
+
+
+def aller_aux_cartes():
+    st.session_state.nav = PAGE_CARTES
+
+
+def afficher_revision(r: dict, sb_ok: bool):
+    vues, total = F.progression(r)
+    if r["termine"]:
+        if not r["enregistree"]:
+            r["enregistree"] = True
+            if sb_ok and r["notes"]:
+                sauvegarder_flashcards(r)
+        b = F.bilan(r)
+        st.markdown(f"## {'Série terminée' if vues == total else 'Série arrêtée'} : +{b['points']} points")
+        for col, (valeur, libelle) in zip(st.columns(3), ((b["sues"], "cartes sues"), (b["du_premier_coup"], "du premier coup"),
+                                                           (b["a_revoir"], "à revoir"))):
+            col.markdown(f'<div class="chiffre"><b>{valeur}</b><span>{libelle}</span></div>', unsafe_allow_html=True)
+        ratees = [r["cartes"][i] for i, ok in r["notes"].items() if not ok]
+        if ratees:
+            st.markdown("### À revoir")
+            for c in ratees:
+                st.markdown(f"**{html.escape(c['recto'])}**  \n{html.escape(c['verso'])}")
+        st.markdown("")
+        c1, c2 = st.columns(2) if ratees else (None, st.container())
+        if ratees and c1.button(f"🔁 Revoir ces {len(ratees)} cartes", type="primary", use_container_width=True):
+            st.session_state.revision = F.nouvelle_revision(ratees, {**r["profil"], "chapitre": "Cartes à revoir"})
+            st.rerun()
+        if c2.button("🃏 Autres cartes", use_container_width=True):
+            st.session_state.revision = None
+            st.rerun()
+        return
+
+    c = F.carte_courante(r)
+    i = r["file"][0]
+    st.progress(vues / total, text=f"{r['profil'].get('chapitre', '')} · carte {min(vues + 1, total)} sur {total}")
+    with st.container(key="carte_retournee" if r["retournee"] else "carte"):
+        st.markdown(f'<div class="face">Question</div><div class="question">{html.escape(c["recto"])}</div>',
+                    unsafe_allow_html=True)
+        if c.get("figure"):
+            _, milieu, _ = st.columns([1, 1.4, 1])
+            milieu.image(ecran._image_figure(repr(c["figure"]), c["figure"]), use_container_width=True)
+        if r["retournee"]:
+            st.markdown(f'<div class="reponse"><small>Réponse</small>{html.escape(c["verso"])}</div>', unsafe_allow_html=True)
+    if i in r["repassees"]:
+        st.caption("Cette carte revient : tu l'avais notée « À revoir ».")
+    st.markdown("")
+    if not r["retournee"]:
+        if st.button("🔄 Retourner la carte", type="primary", use_container_width=True):
+            F.retourner(r)
+            st.rerun()
+    else:
+        c1, c2 = st.columns(2)
+        if c1.button("🔁 À revoir", use_container_width=True):
+            F.noter(r, False)
+            st.rerun()
+        if c2.button("✅ Je savais", type="primary", use_container_width=True):
+            F.noter(r, True)
+            st.rerun()
+    if st.button("Arrêter la série", key="arreter_cartes"):
+        r["termine"] = True
+        st.rerun()
+
+
+def page_flashcards(sb_ok: bool):
+    nom = (st.session_state.get("prenom") or "").strip()
+    lignes = charger_seances_eleve(nom) if sb_ok and nom else []
+    jours, _ = P.jours_de_suite(lignes, aujourd_hui())
+    barre_haut(nom, P.cumul(lignes), jours)
+    r = st.session_state.get("revision")
+    if r is not None:
+        afficher_revision(r, sb_ok)
+        return
+
+    st.markdown("## Flashcards")
+    pile = pile_a_revoir(lignes)
+    gauche, droite = st.columns([1.6, 1], gap="large")
+    with gauche, st.container(key="creer_cartes"):
+        st.markdown('<div class="titre-carte">🃏 Crée tes flashcards</div><div class="sous-titre">Le tuteur écrit une '
+                    "question au recto et la réponse au verso. Tu retournes chaque carte et tu dis si tu savais.</div>",
+                    unsafe_allow_html=True)
+        classes = list(CHAPITRES.keys())
+        classe_eleve = st.session_state.get("classe")
+        classe = st.selectbox("📚 Classe", classes, index=classes.index(classe_eleve) if classe_eleve in classes else 0,
+                              key="classe_cartes")
+        chapitre = st.selectbox("📖 Chapitre", CHAPITRES.get(classe, []) or ["(écris ton thème sur l'accueil)"], key="chapitre_cartes")
+        nombre = st.segmented_control("Nombre de cartes", F.NOMBRES, default=10, key="nb_cartes") or 10
+        creer = st.button("✨ Créer les cartes", type="primary", use_container_width=True, disabled=not CHAPITRES.get(classe))
+    with droite, st.container(key="pile"):
+        st.markdown(f'<div class="etiquette"><span class="icone">🔁</span>Cartes à revoir</div>'
+                    f'<div class="pile-nombre">{len(pile)}</div>'
+                    f'<div class="sous-titre">{"Les cartes que tu as notées « À revoir » la dernière fois." if pile else "Aucune carte à revoir pour l’instant."}</div>',
+                    unsafe_allow_html=True)
+        revoir = st.button(f"Réviser mes {len(pile)} cartes" if pile else "Réviser mes cartes", use_container_width=True,
+                           disabled=not pile, key="reviser_pile")
+        if not nom:
+            st.caption("Écris ton prénom sur l'accueil pour garder tes cartes à revoir.")
+
+    profil = {"nom": nom or "Élève", "classe": classe, "programme": PAYS_PROGRAMMES[0], "chapitre": chapitre,
+              "theme_libre": False, "modele": ""}
+    if creer:
+        try:
+            with st.spinner("🃏 Le tuteur écrit tes cartes…"):
+                cartes = T.generer_cartes(get_api_key() or "", profil, nombre, deja=[c["recto"] for c in pile])
+        except T.TuteurIndisponible:
+            st.error("Le tuteur ne répond pas pour le moment. Réessaie dans un instant.")
+        else:
+            st.session_state.revision = F.nouvelle_revision(cartes, profil)
+            st.rerun()
+    if revoir and pile:
+        st.session_state.revision = F.nouvelle_revision(pile, {**profil, "chapitre": "Cartes à revoir"})
+        st.rerun()
+
+
 def revenir_a_l_accueil():
     st.session_state.seance = None
-    st.session_state.nav = PAGES[0]
+    st.session_state.revision = None
+    st.session_state.nav = PAGE_ACCUEIL
     st.session_state.pop("_ballons_montres", None)
 
 
@@ -787,7 +951,7 @@ def main():
         initial_sidebar_state="auto",  # repliée sur téléphone, sinon elle cache la carte
     )
     st.markdown(CSS, unsafe_allow_html=True)
-    for k, v in {"seance": None, "prof_auth": False}.items():
+    for k, v in {"seance": None, "revision": None, "prof_auth": False}.items():
         st.session_state.setdefault(k, v)
     # Le prénom et la classe sont saisis sur l'accueil : Streamlit efface la valeur d'un champ qui n'est pas affiché
     # (autre page, séance en cours). La réaffecter à chaque passage la garde d'une page à l'autre.
@@ -804,7 +968,7 @@ def main():
         # Pendant une séance : résumé et commandes (le profil se remplit au centre de l'accueil).
         btn_bilan = False
         seance = st.session_state.seance
-        if page == PAGES[0] and seance is not None:
+        if page == PAGE_ACCUEIL and seance is not None:
             st.divider()
             p = seance["profil"]
             st.markdown(f"👤 **{p['nom']}** · {p['classe']}")
@@ -816,7 +980,7 @@ def main():
             if not seance["termine"]:
                 btn_bilan = st.button("🏁 Terminer et voir mon bilan", use_container_width=True)
 
-    if page == PAGES[2]:
+    if page == PAGE_PROF:
         st.markdown("""<div class="hero">
             <h1>🧑‍🏫 Espace professeur</h1>
             <div class="subtitle">Suivi et progression des élèves</div>
@@ -842,8 +1006,11 @@ def main():
         afficher_dashboard_prof()
         return
 
-    if page == PAGES[1]:
+    if page == PAGE_PROGRESSION:
         page_progression(sb_ok)
+        return
+    if page == PAGE_CARTES:
+        page_flashcards(sb_ok)
         return
 
     if btn_bilan and st.session_state.seance:
